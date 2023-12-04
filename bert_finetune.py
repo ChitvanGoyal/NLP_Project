@@ -5,10 +5,13 @@ from tqdm import tqdm
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-# Load and preprocess data
-train_data = pd.read_csv('datasets/triples.train.small.tsv', sep='\t')
-dev_data = pd.read_csv('datasets/top1000.dev', sep='\t')
 
+column_names = ['query', 'positive_passage', 'negative_passage']
+# Load and preprocess data
+train_data = pd.read_csv('datasets/triples.train.small.tsv', sep='\t', header=None, names=column_names)
+
+print(train_data.columns)
+print(dev_data.columns)
 # Tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
@@ -33,7 +36,8 @@ class RerankingDataset(Dataset):
             neg_passage,
             return_tensors='pt',
             max_length=self.max_len,
-            truncation=True
+            truncation=True,
+            padding='max_length'
         )
 
         return {
@@ -49,8 +53,8 @@ train_set, val_set = train_test_split(train_data, test_size=0.2, random_state=42
 train_dataset = RerankingDataset(train_set, tokenizer)
 val_dataset = RerankingDataset(val_set, tokenizer)
 
-train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
 
 # Load pre-trained BERT model
 model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=1)
