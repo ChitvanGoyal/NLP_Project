@@ -1,7 +1,6 @@
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from torch.nn.utils.rnn import pad_sequence
 from transformers import BertTokenizer, BertForSequenceClassification
 from datasets import Dataset as HFDataset # Rename to avoid conflict with PyTorch Datasets
 from tqdm.auto import tqdm
@@ -23,16 +22,9 @@ class MSMARCODataset(Dataset):
         query_text = str(row['query'])
         passage_text = str(row['passage'])
 
-        query_encoding = self.tokenizer(
+        # Encode the query-passage pair
+        encoding = self.tokenizer.encode_plus(
             query_text,
-            add_special_tokens=True,
-            padding='max_length',
-            truncation=True,
-            max_length=self.max_token_length,
-            return_tensors="pt"
-        )
-
-        passage_encoding = self.tokenizer(
             passage_text,
             add_special_tokens=True,
             padding='max_length',
@@ -44,51 +36,49 @@ class MSMARCODataset(Dataset):
         label = torch.tensor(row['relevance'])
 
         return {
-            'query_input_ids': query_encoding['input_ids'].squeeze(0),
-            'query_attention_mask': query_encoding['attention_mask'].squeeze(0),
-            'passage_input_ids': passage_encoding['input_ids'].squeeze(0),
-            'passage_attention_mask': passage_encoding['attention_mask'].squeeze(0),
+            'query_id': row['qid'],
+            'passage_id': row['pid'],
+            'input_ids': encoding['input_ids'].squeeze(0),
+            'attention_mask': encoding['attention_mask'].squeeze(0),
             'label': label
         }
 
 
 def collate_fn(batch):
-    max_length = 512  # Adjust based on your model's max length
-    input_ids_batch = []
-    attention_mask_batch = []
-    labels_batch = []
-
-    for item in batch:
-        # Concatenate the query and passage input ids and attention masks
-        combined_input_ids = torch.cat([item['query_input_ids'], item['passage_input_ids']])[:max_length]
-        combined_attention_mask = torch.cat([item['query_attention_mask'], item['passage_attention_mask']])[:max_length]
-
-        # Calculate padding length for this concatenated pair
-        padding_length = max_length - combined_input_ids.size(0)
-
-        # Pad the concatenated input ids and attention masks to max_length
-        padded_input_ids = torch.cat([combined_input_ids, torch.zeros(padding_length, dtype=torch.long)])
-        padded_attention_mask = torch.cat([combined_attention_mask, torch.zeros(padding_length, dtype=torch.long)])
-
-        input_ids_batch.append(padded_input_ids)
-        attention_mask_batch.append(padded_attention_mask)
-        labels_batch.append(item['label'])
-
-    # Convert lists to tensors
-    input_ids_batch = torch.stack(input_ids_batch)
-    attention_mask_batch = torch.stack(attention_mask_batch)
-    labels_batch = torch.stack(labels_batch)
+    input_ids_batch = torch.stack([item['input_ids'] for item in batch])
+    attention_mask_batch = torch.stack([item['attention_mask'] for item in batch])
+    labels_batch = torch.stack([item['label'] for item in batch])
+    query_ids = torch.tensor([item['query_id'] for item in batch])
+    passage_ids = torch.tensor([item['passage_id'] for item in batch]) 
 
     return {
         'input_ids': input_ids_batch,
         'attention_mask': attention_mask_batch,
-        'labels': labels_batch
+        'labels': labels_batch,
+        'query_ids': query_ids,
+        'passage_ids': passage_ids
     }
 
 
 def create_data_loader(dataframe, tokenizer, batch_size, max_token_length=512):
     dataset = MSMARCODataset(dataframe, tokenizer, max_token_length)
     return DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn, num_workers=0)
+
+
+def calculate_mrr(ground_truths, predictions):
+    reciprocal_ranks = []
+
+    for query_id in ground_truths.keys():
+        if query_id in predictions:
+            try:
+                rank = predictions[query_id].index(ground_truths[query_id]) + 1
+                reciprocal_ranks.append(1 / rank)
+            except ValueError:
+                reciprocal_ranks.append(0)
+        else:
+            reciprocal_ranks.append(0)
+
+    return sum(reciprocal_ranks) / len(reciprocal_ranks)
 
 
 def main():
@@ -105,21 +95,39 @@ def main():
     model.to(device)
     model.eval()  # Set the model to evaluation mode
 
-    scores = []
+    # Populate ground_truths with correct relevant passage for each query
+    relevant_df = df[df['relevance'] == 1]
+    ground_truths = dict(zip(relevant_df['qid'], relevant_df['pid'])) # Create the dictionary mapping query_id to passage_id
+    
+    query_passage_scores = {}
+    
     with torch.no_grad():  # Disable gradient computation
-        
         for batch in tqdm(data_loader):
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
+            query_ids = batch['query_ids']
+            passage_ids = batch['passage_ids']
 
-            # Run model inference
             outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-
-            # Extract relevance scores
-            probabilities = torch.softmax(outputs.logits, dim=1)
+            probabilities = torch.softmax(outputs.logits, dim=1) # Extract relevance scores
             batch_scores = probabilities[:, 1]  # Assuming label '1' is relevant
-            scores.extend(batch_scores.flatten().tolist())
+            
+            for query_id, score, passage_id in zip(query_ids, batch_scores, passage_ids):
+                if query_id not in query_passage_scores:
+                    query_passage_scores[query_id] = []
+                query_passage_scores[query_id].append((score.item(), batch['passage_ids']))  # Assuming passage IDs
+
+        
+    # Re-rank passages for each query
+    predictions = {}
+    for query_id, scores in query_passage_scores.items():
+        ranked_passages = sorted(scores, key=lambda x: x[0], reverse=True)
+        predictions[query_id] = [x[1] for x in ranked_passages]
+
+    # Calculate MRR
+    mrr_score = calculate_mrr(ground_truths, predictions)
+    print(f"MRR Score: {mrr_score}")
+    
 
 
 if __name__ == '__main__':
