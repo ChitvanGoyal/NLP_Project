@@ -4,7 +4,7 @@ from functools import partial
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
 from transformers import BertTokenizer, BertForSequenceClassification
-from datasets import Dataset as HFDataset
+from datasets import Dataset
 from tqdm.auto import tqdm
 
 class MSMARCODataset(Dataset):
@@ -104,14 +104,11 @@ def collate_fn(batch, tokenizer):
 
 def create_data_loader(dataframe, tokenizer, batch_size, candidate_document_set_size, max_token_length=512):
     dataset = MSMARCODataset(dataframe, tokenizer, candidate_document_set_size, max_token_length)
-
     collate_fn_with_tokenizer = partial(collate_fn, tokenizer=tokenizer)
     return DataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn_with_tokenizer)
 
 
 def main():
-    # Example usage
-    tokenizer = BertTokenizer.from_pretrained('Capreolus/bert-base-msmarco')
     df = pd.read_csv(r"C:\Users\Andrew Deur\Documents\NYU\DS-GA 1011 NLP\Project\filtered_top1000_dev_with_labels_bmscore.tsv")
     data_loader = create_data_loader(df, tokenizer, batch_size=32, candidate_document_set_size=20)
 
