@@ -119,16 +119,15 @@ def main():
 
         
     # Re-rank passages for each query
-    predictions = {}
-    for query_id, scores in query_passage_scores.items():
-        ranked_passages = sorted(scores, key=lambda x: x[0], reverse=True)
-        predictions[query_id] = [x[1] for x in ranked_passages]
+    predictions = {
+        query_id: [pid for _, pid in sorted(scores, key=lambda x: x[0], reverse=True)]
+        for query_id, scores in query_passage_scores.items()
+    }
 
     # Calculate MRR
     mrr_score = calculate_mrr(ground_truths, predictions)
     print(f"MRR Score: {mrr_score}")
     
-
 
 if __name__ == '__main__':
     main()
