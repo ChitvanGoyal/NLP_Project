@@ -1,7 +1,7 @@
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer
+from transformers import BertTokenizer, BertForSequenceClassification
 from datasets import Dataset as HFDataset
 
 class MSMARCODataset(Dataset):
@@ -61,12 +61,11 @@ class MSMARCODataset(Dataset):
             'labels': labels
         }
 
-def create_data_loader(dataframe, tokenizer, batch_size, max_token_length=512):
-    dataset = MSMARCODataset(dataframe, tokenizer, max_token_length)
+def create_data_loader(dataframe, tokenizer, batch_size, candidate_document_set_size, max_token_length=512):
+    dataset = MSMARCODataset(dataframe, tokenizer, candidate_document_set_size, max_token_length)
     return DataLoader(dataset, batch_size=batch_size)
 
 # Example usage
-tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-
+tokenizer = BertTokenizer.from_pretrained('Capreolus/bert-base-msmarco')
 df = pd.read_csv("filtered_top1000_dev_with_labels_bmscore.tsv")
-data_loader = create_data_loader(df, tokenizer, batch_size=32)
+data_loader = create_data_loader(df, tokenizer, batch_size=32, candidate_document_set_size=20)
