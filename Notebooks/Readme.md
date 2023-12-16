@@ -1,0 +1,1 @@
+The notebooks cantain codes for MB 25 scoring of query document pairs and ColBERT reranking
